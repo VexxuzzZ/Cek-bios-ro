@@ -6,869 +6,786 @@ const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
 
-
 // ==========================
-//GANTI ALL DLID INI
 // KONFIGURASI DASAR 
-const ADMIN_ID = 8248734943;
-const ADMIN = 8248734943;
-const OWNER = "8248734943";
-// ==========================
-const BOT_TOKEN = '8525102753:AAEUMWcS1K5oYJVM-sBhvfl6wLtU34HBjPU';
+// GANTI DENGAN DATA ANDA
+const ADMIN_ID = 8248734943; // Ganti dengan ID Telegram Anda
+const OWNER = "8248734943"; // Ganti dengan ID Telegram Anda
+const BOT_TOKEN = '8525102753:AAEUMWcS1K5oYJVM-sBhvfl6wLtU34HBjPU'; // Ganti dengan token bot Anda
 
-
-//yabg ini jangan di ganti kecuali admin mengatakan apikey ganti ke xxx lalu ganti apkikey misal adminv ganti menjadi memek nah ganti sudah itu run aja 
-//by lunzy kontol
-
-const API_KEY = 'adminnn';
+// API Configuration
+const API_KEY = 'adminnn'; // Ganti dengan API key Anda
 const BASE_URL = 'https://team-lunzy-and-rezz.vercel.app/api';
-const bot = new Telegraf(BOT_TOKEN);
 
-let waClient = null;
-let waConnectionStatus = false;
-const userCooldowns = {}; // { userId: timestamp_end_cooldown }
-
-// =========================
-// CONFIG GITHUB
-// =========================
-const { Octokit } = require("@octokit/rest");
-
-
-//ganti id tele mu
-
-
-// ==========================
-// HELPER FUNCTION UMUM
-// ==========================
-
-function formatResult(data) {
-  let out = '';
-  if (data.success !== undefined)
-    out += `${data.success ? '✅ Berhasil' : '❌ Gagal'}`;
-  if (data.email) out += `• Email: ${data.email}\n`;
-  if (data.subject) out += `• Subjek: ${data.subject}\n`;
-  if (data.response) out += `• Respon: ${data.response}\n`;
-  return out;
-}
-
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-//pepelekeb
-
-const GITHUB_TOKEN = "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"; // <- isi sendiri
+// GitHub Configuration
+const GITHUB_TOKEN = "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"; // Ganti dengan token GitHub Anda
 const GITHUB_OWNER = "F12241";
 const GITHUB_REPO = "team-lunzy-and-rezz";
 const GITHUB_FILE = "dataimel.txt";
 const GITHUB_BRANCH = "main";
 
+// Inisialisasi bot
+const bot = new Telegraf(BOT_TOKEN);
 
+// State WhatsApp
+let waClient = null;
+let waConnectionStatus = false;
+const userCooldowns = {};
+
+// Data premium users
+const premiumFile = './premium.json';
+let premiumUsers = fs.existsSync(premiumFile) 
+  ? JSON.parse(fs.readFileSync(premiumFile, 'utf-8'))
+  : [];
+
+// Inisialisasi Octokit
+const { Octokit } = require("@octokit/rest");
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
-async function deleteEmailFromGithub(target) {
-  try {
-    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE}`;
-
-    const res = await axios.get(url, {
-      headers: { Authorization: `token ${GITHUB_TOKEN}` }
-    });
-
-    const sha = res.data.sha;
-    const content = Buffer.from(res.data.content, "base64").toString("utf8");
-
-    // Hapus baris yang cocok
-    const newContent = content
-      .split("\n")
-      .filter(line => line.trim() !== target.trim())
-      .join("\n");
-
-    if (newContent === content) {
-      return { success: false, message: "Data tidak ditemukan." };
-    }
-
-    // Upload ulang
-    await axios.put(
-      url,
-      {
-        message: `Delete email: ${target}`,
-        content: Buffer.from(newContent, "utf8").toString("base64"),
-        sha
-      },
-      {
-        headers: { Authorization: `token ${GITHUB_TOKEN}` }
-      }
-    );
-
-    return { success: true, message: "Berhasil menghapus." };
-
-  } catch (e) {
-    console.log(e.response?.data || e);
-    return { success: false, message: e.response?.data?.message || e.message };
-  }
-}
-
-
-    
-async function githubGetFileRaw() {
-  try {
-    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE}`;
-    const res = await axios.get(url, {
-      headers: { Authorization: `Bearer ${GITHUB_TOKEN}` }
-    });
-
-    return {
-      content: Buffer.from(res.data.content, "base64").toString("utf8"),
-      sha: res.data.sha
-    };
-
-  } catch (err) {
-    if (err.response && err.response.status === 404) {
-      return { content: "", sha: null };
-    }
-    throw err;
-  }
-}
-//github
-async function githubGetFile() {
-  try {
-    const res = await octokit.repos.getContent({
-      owner: GITHUB_OWNER,
-      repo: GITHUB_REPO,
-      path: GITHUB_FILE,
-      ref: GITHUB_BRANCH
-    });
-
-    const content = Buffer.from(res.data.content, "base64").toString("utf8");
-    return { content, sha: res.data.sha };
-
-  } catch (err) {
-    if (err.status === 404) return { content: "", sha: null };
-    throw err;
-  }
-}
-
-async function githubUpdateFile(newContent, sha) {
-  return await octokit.repos.createOrUpdateFileContents({
-    owner: GITHUB_OWNER,
-    repo: GITHUB_REPO,
-    path: GITHUB_FILE,
-    message: "Update via Telegram Bot",
-    content: Buffer.from(newContent).toString("base64"),
-    sha: sha || undefined,
-    branch: GITHUB_BRANCH
-  });
-}
 // ==========================
-// FITUR PREMIUM USER
+// HELPER FUNCTIONS
 // ==========================
-
-async function startWhatsAppClient() {
-  console.log("🚀 Memulai koneksi WhatsApp...")
-
-  const { state, saveCreds } = await useMultiFileAuthState('./session')
-  const { version } = await fetchLatestWaWebVersion()
-
-  waClient = makeWASocket({
-    auth: state,
-    logger: pino({ level: "silent" }),
-    printQRInTerminal: false,
-    version,
-    browser: ["Ubuntu", "Chrome", "20.0.00"]
-  })
-
-  waClient.ev.on("creds.update", saveCreds)
-
-  waClient.ev.on("connection.update", (update) => {
-  const { connection, lastDisconnect } = update
-
-  if (connection === "close") {
-    waConnectionStatus = false
-    const reason = new Boom(lastDisconnect?.error)?.output?.statusCode
-    const reconnect = reason !== DisconnectReason.loggedOut
-
-    console.log("❌ WA Disconnect:", reason)
-
-    if (reconnect) {
-      console.log("🔄 Reconnect 5 detik...")
-      setTimeout(startWhatsAppClient, 5000)
-    } else {
-      console.log("🛑 Logout. Hapus folder session untuk pairing ulang.")
-      waClient = null
-    }
-  }
-
-  if (connection === "open") {
-    waConnectionStatus = true
-    console.log("✅ WhatsApp terhubung!")
-   }
- })
-}
-startWhatsAppClient()
-// ===========================
-// HANDLE CEK BIO
-// (tidak diubah dari versi asli)
-async function handleBioCheck(ctx, numbersToCheck) {
-  if (!waConnectionStatus)
-    return ctx.telegram.sendMessage(
-      ctx.chat.id,
-      "⚠️ WA belum konek, silahkan pairing nomor dulu ke owner."
-    )
-
-  if (numbersToCheck.length === 0)
-    return ctx.telegram.sendMessage(
-      ctx.chat.id,
-      "Nomornya mana, Woi?"
-    )
-
-  await ctx.telegram.sendMessage(
-    ctx.chat.id,
-    `🔍 OKE 🚀🔥, mau ngecek bio nomor mu dengan total ${numbersToCheck.length} Lagi Di Cek.`
-  )
-
-  let withBio = []
-  let noBio = []
-  let notRegistered = []
-
-  const jids = numbersToCheck.map(n => n.trim() + "@s.whatsapp.net")
-  const existenceResults = await waClient.onWhatsApp(...jids)
-
-  const registeredJids = []
-  existenceResults.forEach(r => {
-    if (r.exists) registeredJids.push(r.jid)
-    else notRegistered.push(r.jid.split("@")[0])
-  })
-
-  const registeredNumbers = registeredJids.map(j => j.split("@")[0])
-
-  if (registeredNumbers.length > 0) {
-    const batchSize = 15
-    for (let i = 0; i < registeredNumbers.length; i += batchSize) {
-      const batch = registeredNumbers.slice(i, i + batchSize)
-
-      const promises = batch.map(async nomor => {
-        const jid = nomor + "@s.whatsapp.net"
-        try {
-          const statusResult = await waClient.fetchStatus(jid)
-
-          let bioText = null
-          let setAtText = null
-
-          if (statusResult) {
-            if (typeof statusResult.status === "string") {
-              bioText = statusResult.status
-              setAtText = statusResult.setAt
-            } else if (typeof statusResult.status === "object" && statusResult.status !== null) {
-              bioText = statusResult.status.text || statusResult.status.status
-              setAtText = statusResult.status.setAt || statusResult.setAt
-            }
-          }
-
-          if (bioText && bioText.trim()) {
-            withBio.push({ nomor, bio: bioText, setAt: setAtText })
-          } else {
-            noBio.push(nomor)
-          }
-        } catch {
-          notRegistered.push(nomor)
-        }
-      })
-
-      await Promise.allSettled(promises)
-      await sleep(1000)
-    }
-  }
-
-  let fileContent = "HASIL CEK BIO SEMUA USER\n\n"
-  fileContent += `Total dicek : ${numbersToCheck.length}\n`
-  fileContent += `Dengan Bio : ${withBio.length}\n`
-  fileContent += `Tanpa Bio  : ${noBio.length}\n`
-  fileContent += `Tidak Terdaftar : ${notRegistered.length}\n\n`
-
-  if (withBio.length > 0) {
-    fileContent += "==============================\n"
-    fileContent += "NOMOR DENGAN BIO\n\n"
-
-    withBio.forEach(item => {
-      const d = new Date(item.setAt)
-      const waktu = !isNaN(d)
-        ? d.toLocaleString("id-ID")
-        : "Tidak diketahui"
-
-      fileContent += `${item.nomor}\n`
-      fileContent += `Bio   : ${item.bio}\n`
-      fileContent += `Date  : ${waktu}\n\n`
-    })
-  }
-
-  fileContent += "==============================\n"
-  fileContent += "NOMOR TANPA BIO / PRIVASI\n\n"
-
-  if (noBio.length > 0) {
-    noBio.forEach(n => {
-      fileContent += `${n}\n`
-    })
-  } else {
-    fileContent += "(Kosong)\n"
-  }
-
-  const filePath = `./hasil_cekbio_${ctx.from.id}.txt`
-  fs.writeFileSync(filePath, fileContent)
-
-  await ctx.telegram.sendDocument(
-    ctx.chat.id,
-    { source: filePath },
-    { caption: "Nih hasilnya boskuu." }
-  )
-
-  fs.unlinkSync(filePath)
-}
-
-// ==========================
-//  COMMANDS TELEGRAM (addprem/delprem/listprem/pairing/cek/broadcast) kept as original
-
-bot.command("pairing", async (ctx) => {
-  const phoneNumber = ctx.message.text
-    .split(" ")[1]
-    ?.replace(/[^0-9]/g, "")
-
-  if (!phoneNumber) {
-    return ctx.reply(
-      "❌ *Format salah*\nGunakan:\n`/pairing 628xxxxxxxxx`",
-      { parse_mode: "Markdown" }
-    )
-  }
-
-  if (!waClient || !waClient.authState) {
-    return ctx.reply("⚠️ WA belum siap, tunggu sebentar.")
-  }
-
-  if (waClient.authState.creds.registered) {
-    return ctx.reply("✅ WhatsApp sudah terhubung, tidak perlu pairing.")
-  }
-
-  try {
-    await ctx.reply("⏳ Meminta kode pairing...")
-
-    const code = await waClient.requestPairingCode(phoneNumber)
-
-    await ctx.reply(
-      `📲 *PAIRING CODE*\n\n` +
-      `*${code}*\n\n` +
-      `Masukkan di WhatsApp:\n` +
-      `Perangkat Tertaut → Tautkan dengan nomor`,
-      { parse_mode: "Markdown" }
-    )
-
-    console.log("PAIRING CODE:", code)
-
-  } catch (err) {
-    console.error(err)
-    ctx.reply("❌ Gagal minta pairing code.\nPastikan nomor benar.")
-  }
-})
-
-bot.command('cekbio', async (ctx) => {
-  const nums = ctx.message.text.split(' ').slice(1).join(' ').match(/\d+/g) || [];
-  await handleBioCheck(ctx, nums);
-});
-
-bot.on('document', async (ctx) => {
-  const doc = ctx.message.document;
-  const allowedTypes = ['text/plain', 'text/csv'];
-
-  if (!allowedTypes.includes(doc.mime_type)) {
-    return ctx.reply("Filenya harus format .txt atau .csv ya bos!");
-  }
-
-  try {
-    const fileLink = await ctx.telegram.getFileLink(doc.file_id);
-    const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
-    const data = Buffer.from(response.data, 'binary').toString('utf-8');
-    const numbers = data.match(/\d+/g) || [];
-    if (numbers.length === 0) return ctx.reply("❌ Tidak ditemukan nomor di file.");
-    await handleBioCheck(ctx, numbers);
-  } catch (err) {
-    console.error(err);
-    ctx.reply("❌ Gagal membaca file, coba lagi bos.");
-  }
-});
-// ==========================
-// FITUR KHUSUS GRUP
-// ==========================
-
-
-const premiumFile = './premium.json';
-let premiumUsers = fs.existsSync(premiumFile)
-  ? JSON.parse(fs.readFileSync(premiumFile))
-  : [];
 
 function savePremium() {
   fs.writeFileSync(premiumFile, JSON.stringify(premiumUsers, null, 2));
 }
 
 function isPremium(id) {
-  return premiumUsers.includes(id);
+  return premiumUsers.includes(id.toString());
 }
 
-// GANTI ID ADMIN DENGAN ID KAMU SENDIRI
+function isAdmin(id) {
+  return id.toString() === ADMIN_ID.toString();
+}
 
+function isOwner(id) {
+  return id.toString() === OWNER.toString();
+}
 
-bot.command('listgrup', async (ctx) => {
-  if (ctx.from.id.toString() !== OWNER) {
-    return ctx.reply("❌ Hanya OWNER yang bisa melihat daftar grup.");
-  }
+function formatResult(data) {
+  let out = '';
+  if (data.success !== undefined)
+    out += `${data.success ? '✅ Berhasil' : '❌ Gagal'}`;
+  if (data.email) out += `\n• Email: ${data.email}`;
+  if (data.subject) out += `\n• Subjek: ${data.subject}`;
+  if (data.response) out += `\n• Respon: ${data.response}`;
+  return out;
+}
 
-  if (grupList.length === 0) {
-    return ctx.reply("📭 Tidak ada grup yang terdaftar.");
-  }
-
-  let text = "📌 *Daftar Grup Terdaftar:*\n\n";
-  grupList.forEach((id, i) => {
-    text += `${i + 1}. \`${id}\`\n`;
-  });
-
-  ctx.replyWithMarkdown(text);
-});
-// ➕ ADDPREM
-bot.command('addprem', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Hanya admin yang bisa menambah premium.');
-  let targetId = ctx.message.reply_to_message
-    ? ctx.message.reply_to_message.from.id
-    : parseInt(ctx.message.text.split(' ')[1]);
-  if (!targetId) return ctx.reply('❌ Gunakan: /addprem <id> atau reply pesan user.');
-  if (!premiumUsers.includes(targetId)) {
-    premiumUsers.push(targetId);
-    savePremium();
-    ctx.reply(`✅ User ${targetId} ditambahkan ke daftar premium.`);
-  } else ctx.reply('⚠️ User sudah premium.');
-});
-
-// ➖ DELPREM
-bot.command('delprem', async (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.reply('❌ Hanya admin yang bisa menghapus premium.');
-  let targetId = ctx.message.reply_to_message
-    ? ctx.message.reply_to_message.from.id
-    : parseInt(ctx.message.text.split(' ')[1]);
-  if (!targetId) return ctx.reply('❌ Gunakan: /delprem <id> atau reply pesan user.');
-  if (premiumUsers.includes(targetId)) {
-    premiumUsers = premiumUsers.filter(id => id !== targetId);
-    savePremium();
-    ctx.reply(`✅ User ${targetId} dihapus dari daftar premium.`);
-  } else ctx.reply('⚠️ User tidak ada di daftar premium.');
-});
-
-// 📜 LISTPREM
-bot.command('listprem', async (ctx) => {
-  if (!premiumUsers.length) return ctx.reply('📭 Belum ada user premium.');
-  const list = premiumUsers.map((id, i) => `${i + 1}. ${id}`).join('\n');
-  ctx.reply(`💎 *Daftar Premium:*\n${list}`, { parse_mode: 'Markdown' });
-});
-
-// ==========================
-// PROTEKSI PREMIUM UNTUK FITUR LAIN
-// ==========================
-
-// Middleware global (cek semua command selain /start dan fitur admin)
-// Middleware global (cek semua command selain /start dan fitur admin)
-bot.use(async (ctx, next) => {
-  const isAdmin = ctx.from?.id === ADMIN_ID;
-  const message = ctx.message?.text || "";
-  const command = message.split(' ')[0].toLowerCase();
-
-  // command bebas: start & admin
-  const allowed = ['/start', '/addprem', '/delprem', '/listprem'];
-
-  if (ctx.updateType === 'message' && command.startsWith('/')) {
-    if (!allowed.includes(command) && !isAdmin && !isPremium(ctx.from.id)) {
-      return ctx.reply('❌ Fitur ini hanya untuk user premium.\nHubungi admin untuk akses premium.');
-    }
-  }
-
-  await next();
-});
-// ==========================
-// WHATSAPP CLIENT (BAILEYS)
-// ==========================
-
-// Helper
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise(r => setTimeout(r, ms));
 }
 
+// ==========================
+// GITHUB FUNCTIONS
+// ==========================
 
-bot.command("addemail", async (ctx) => {
-  // HANYA OWNER / ADMIN YANG BOLEH
-  if (ctx.from.id !== ADMIN) {
-    return ctx.reply("❌ Perintah ini hanya untuk OWNER.");
-  }
-
-  const text = ctx.message.text.replace("/addemail", "").trim();
-
-  if (!text || !text.includes(":")) {
-    return ctx.reply("⚠️ Format salah.\nGunakan:\n`/addemail email:pass`", {
-      parse_mode: "Markdown"
+async function githubGetFile() {
+  try {
+    const { data } = await octokit.repos.getContent({
+      owner: GITHUB_OWNER,
+      repo: GITHUB_REPO,
+      path: GITHUB_FILE,
+      ref: GITHUB_BRANCH
     });
-  }
 
+    const content = Buffer.from(data.content, 'base64').toString('utf-8');
+    return { content, sha: data.sha };
+  } catch (error) {
+    if (error.status === 404) {
+      return { content: '', sha: null };
+    }
+    throw error;
+  }
+}
+
+async function githubUpdateFile(content, sha) {
+  return await octokit.repos.createOrUpdateFileContents({
+    owner: GITHUB_OWNER,
+    repo: GITHUB_REPO,
+    path: GITHUB_FILE,
+    message: 'Update via Telegram Bot',
+    content: Buffer.from(content).toString('base64'),
+    sha: sha || undefined,
+    branch: GITHUB_BRANCH
+  });
+}
+
+async function deleteEmailFromGithub(target) {
   try {
     const { content, sha } = await githubGetFile();
-    const newContent = (content ? content.trim() + "\n" : "") + text + "\n";
-
-    await githubUpdateFile(newContent, sha);
-
-    ctx.reply("✅ email berhasil ditambahkan !");
-  } catch (err) {
-    console.error(err);
-    ctx.reply("❌ Gagal add email  .");
-  }
-});
-
-
-
-bot.command("listemail", async (ctx) => {
-  if (ctx.from.id !== ADMIN)
-    return ctx.reply("❌ Perintah ini hanya untuk OWNER.");
-
-  try {
-    const { content } = await githubGetFileRaw();
-
-    if (!content.trim())
-      return ctx.reply("📭 Tidak ada data email.");
-
-    const list = content
-      .trim()
-      .split("\n")
-      .map((v, i) => `${i + 1}. ${v}`)
-      .join("\n");
-
-    ctx.reply(`📄 *List Email:*\n${list}`, { parse_mode: "Markdown" });
-
-  } catch (err) {
-    console.log(err);
-    ctx.reply("❌ Gagal mengambil data ");
-  }
-});
-
-bot.command("delemail", async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const message = ctx.message.text;
-
-  if (userId !== OWNER) {
-    return ctx.reply("❌ Kamu tidak memiliki akses menggunakan perintah ini.");
-  }
-
-  const target = message.split(" ")[1];
-
-  if (!target || !target.includes("@") || !target.includes(":")) {
-    return ctx.reply("⚠️ Format salah!\nContoh:\n/delemail email:password");
-  }
-
-  await ctx.reply("🧹 Menghapus email!!.");
-
-  try {
-    const result = await deleteEmailFromGithub(target);
-
-    if (result.success) {
-      ctx.reply(`✅ Berhasil dihapus:\n${target}`);
-    } else {
-      ctx.reply(`❌ Gagal menghapus:\n${result.message}`);
+    
+    if (!content.trim()) {
+      return { success: false, message: "Tidak ada data email." };
     }
 
-  } catch (err) {
-    console.log(err);
-    ctx.reply("❌ Error server, cek console.");
+    const lines = content.split('\n').filter(line => line.trim() !== '');
+    const originalLength = lines.length;
+    const newLines = lines.filter(line => !line.includes(target.split(':')[0]));
+
+    if (originalLength === newLines.length) {
+      return { success: false, message: "Email tidak ditemukan." };
+    }
+
+    const newContent = newLines.join('\n');
+    await githubUpdateFile(newContent, sha);
+
+    return { success: true, message: "Email berhasil dihapus." };
+  } catch (error) {
+    console.error('Error deleting email:', error);
+    return { success: false, message: error.message };
   }
-});
+}
 
+// ==========================
+// WHATSAPP FUNCTIONS
+// ==========================
 
-// Helper: panggil API
+async function startWhatsAppClient() {
+  console.log("🚀 Memulai koneksi WhatsApp...");
+
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState('./session');
+    const { version } = await fetchLatestWaWebVersion();
+
+    waClient = makeWASocket({
+      auth: state,
+      logger: pino({ level: "silent" }),
+      printQRInTerminal: true,
+      version,
+      browser: ["Ubuntu", "Chrome", "20.0.00"]
+    });
+
+    waClient.ev.on("creds.update", saveCreds);
+
+    waClient.ev.on("connection.update", (update) => {
+      const { connection, lastDisconnect } = update;
+
+      if (connection === "close") {
+        waConnectionStatus = false;
+        const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        
+        console.log("❌ WA Disconnected. Reason:", reason);
+
+        if (reason !== DisconnectReason.loggedOut) {
+          console.log("🔄 Reconnecting in 5 seconds...");
+          setTimeout(startWhatsAppClient, 5000);
+        } else {
+          console.log("🛑 Logged out. Delete session folder to re-pair.");
+          waClient = null;
+        }
+      }
+
+      if (connection === "open") {
+        waConnectionStatus = true;
+        console.log("✅ WhatsApp connected!");
+      }
+    });
+
+  } catch (error) {
+    console.error("Failed to start WhatsApp client:", error);
+  }
+}
+
+// ==========================
+// CEK BIO FUNCTION
+// ==========================
+
+async function handleBioCheck(ctx, numbersToCheck) {
+  if (!waConnectionStatus) {
+    return ctx.reply("⚠️ WhatsApp belum terkoneksi. Silakan pairing terlebih dahulu.");
+  }
+
+  if (!numbersToCheck || numbersToCheck.length === 0) {
+    return ctx.reply("❌ Tidak ada nomor yang diberikan.");
+  }
+
+  await ctx.reply(`🔍 Sedang memeriksa ${numbersToCheck.length} nomor...`);
+
+  const results = {
+    withBio: [],
+    noBio: [],
+    notRegistered: []
+  };
+
+  try {
+    const jids = numbersToCheck.map(n => `${n.trim()}@s.whatsapp.net`);
+    
+    // Check if numbers are registered on WhatsApp
+    const existenceResults = await waClient.onWhatsApp(...jids);
+    
+    for (const result of existenceResults) {
+      const number = result.jid.split('@')[0];
+      
+      if (!result.exists) {
+        results.notRegistered.push(number);
+        continue;
+      }
+
+      try {
+        const status = await waClient.fetchStatus(result.jid);
+        
+        if (status && status.status && status.status.trim()) {
+          const bioText = typeof status.status === 'string' 
+            ? status.status 
+            : (status.status.text || status.status.status || '');
+            
+          if (bioText.trim()) {
+            results.withBio.push({
+              number,
+              bio: bioText,
+              setAt: status.setAt ? new Date(status.setAt).toLocaleString('id-ID') : 'Tidak diketahui'
+            });
+          } else {
+            results.noBio.push(number);
+          }
+        } else {
+          results.noBio.push(number);
+        }
+      } catch (error) {
+        results.noBio.push(number);
+      }
+      
+      await sleep(500); // Delay untuk menghindari rate limit
+    }
+
+    // Generate report
+    let report = `📊 HASIL CEK BIO\n\n`;
+    report += `Total dicek: ${numbersToCheck.length}\n`;
+    report += `Dengan Bio: ${results.withBio.length}\n`;
+    report += `Tanpa Bio: ${results.noBio.length}\n`;
+    report += `Tidak Terdaftar: ${results.notRegistered.length}\n\n`;
+
+    if (results.withBio.length > 0) {
+      report += "📱 NOMOR DENGAN BIO:\n";
+      results.withBio.forEach((item, index) => {
+        report += `${index + 1}. ${item.number}\n`;
+        report += `   Bio: ${item.bio}\n`;
+        report += `   Update: ${item.setAt}\n\n`;
+      });
+    }
+
+    if (results.noBio.length > 0) {
+      report += "\n📭 NOMOR TANPA BIO:\n";
+      results.noBio.forEach((num, index) => {
+        report += `${index + 1}. ${num}\n`;
+      });
+    }
+
+    if (results.notRegistered.length > 0) {
+      report += "\n❌ NOMOR TIDAK TERDAFTAR:\n";
+      results.notRegistered.forEach((num, index) => {
+        report += `${index + 1}. ${num}\n`;
+      });
+    }
+
+    // Send as text if short, else as file
+    if (report.length < 4000) {
+      await ctx.reply(report);
+    } else {
+      const filename = `hasil_bio_${Date.now()}.txt`;
+      fs.writeFileSync(filename, report);
+      await ctx.replyWithDocument({ source: filename }, { caption: '📄 Hasil cek bio' });
+      fs.unlinkSync(filename);
+    }
+
+  } catch (error) {
+    console.error('Error checking bio:', error);
+    await ctx.reply('❌ Terjadi kesalahan saat memeriksa bio.');
+  }
+}
+
+// ==========================
+// API CALL FUNCTION
+// ==========================
+
 async function callApi(endpoint, params = {}) {
-  const url = new URL(BASE_URL + endpoint);
-  params.apikey = API_KEY;
-  Object.keys(params).forEach(k => url.searchParams.append(k, params[k]));
-  const res = await fetch(url.toString());
-  return res.json();
+  try {
+    const url = new URL(BASE_URL + endpoint);
+    params.apikey = API_KEY;
+    Object.keys(params).forEach(key => {
+      url.searchParams.append(key, params[key]);
+    });
+
+    const response = await fetch(url.toString());
+    return await response.json();
+  } catch (error) {
+    console.error('API Error:', error);
+    return { success: false, error: error.message };
+  }
 }
 
-
-
+// ==========================
+// COMMAND HANDLERS
 // ==========================
 
-// ==========================
-function dashboardText() {
-  return (
-` 
-\`\`\`
-╭─────────────────────────────╮
-│[ ʜᴇʟᴏ ɪ ᴀᴍ ᴛʜᴇ ʀᴇᴅ ғɪx ʙᴏᴛ x ᴄʜᴇᴋ ʙɪᴏ ]
-│     𖤐 [ ɪᴍ ʀᴇᴀᴅʏ ᴛᴏ ʜᴇʟᴘ ʏᴏᴜ ] 𖤐  
-╰─────────────────────────────╯
-\`\`\`
-\`\`\`
-╭─────────────────────────────╮
-│⏤ [ ᴅᴀsʙᴏᴀʀᴅ sɪsᴛᴇᴍ 𖤐 ]     
-│⬡ [ ᴅᴇᴠᴇʟᴏᴠᴇʀ ] : [ Nortxh𖤐 ]          
-│⬡ [ ᴠᴇʀsɪᴏɴ ] : 3.1.1.2                 
-│⬡ [ ɢᴇɴ ]: 5 𖤐  
-│ sᴜᴘʀᴏᴛ Nortxh 𖤐                
-╰─────────────────────────────╯
-\`\`\``
-  );
-}
-bot.start((ctx) => {
-  ctx.replyWithPhoto(
-    { url: "https://files.catbox.moe/0x7mt1.jpg" }, // bebas, ganti link fotomu sendiri
+// START COMMAND
+bot.start(async (ctx) => {
+  const welcomeText = `
+╔═══════════════════════╗
+║    🤖 FIX MERAH BOT   ║
+║       BIO CHECKER     ║
+╚═══════════════════════╝
+
+👋 Halo ${ctx.from.first_name}!
+
+📋 *Fitur Utama:*
+• ✅ Cek Bio WhatsApp
+• 🔧 Fix Mode Appeal
+• 📊 Premium Features
+
+🔐 *Status:* ${isPremium(ctx.from.id) ? '💎 PREMIUM' : '🔓 FREE'}
+
+Gunakan /menu untuk melihat semua fitur.
+  `;
+
+  await ctx.replyWithPhoto(
+    { url: 'https://files.catbox.moe/0x7mt1.jpg' },
     {
-      caption: dashboardText(),
-      parse_mode: "Markdown",
+      caption: welcomeText,
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-         [
-          { text: '[ 𖤐 ғɪx ᴍᴇʀᴀʜ ᴍᴇɴᴜ 𖤐] ', callback_data: 'banding' },
-          { text: '[ 𖤐 ᴏᴡɴᴇʀ ᴍᴇɴᴜ 𖤐 ]', callback_data: 'menuowner' }
-         ],
-         [
-           { text: '[ 𖤐 ᴄᴇᴋ ʙɪᴏ ᴍᴇɴᴜ 𖤐 ]', callback_data: 'cek' },
-           { text: '[𖤐ᴛʜᴀɴᴋ ᴛᴏ/ʙᴇsᴛ ғʀɪᴇɴᴅ𖤐]', callback_data: 'besti' }
-        ],
-        [
-           { text: '[ 𖤐 ʙᴜʏ sᴄʀɪᴘᴛ? 𖤐 ]', url: 't.me/Lunzy2' }
+          [{ text: '📱 Buka Menu', callback_data: 'show_menu' }],
+          [{ text: '👤 Owner', url: 'https://t.me/Lunzy2' }]
         ]
-       ]
       }
     }
   );
 });
-// 🎯 Command /start → kirim dashboard utama
-bot.start((ctx) => {
-  ctx.replyWithMarkdown(dashboardText(), dashboardMenu());
+
+// MENU COMMAND
+bot.command('menu', async (ctx) => {
+  const menuText = `
+📱 *MAIN MENU*
+
+🛠️ *Tools:*
+/cekbio [nomor] - Cek bio WhatsApp
+/fix [nomor] - Mode appeal
+
+👑 *Owner Only:*
+/pairing [nomor] - Pairing WhatsApp
+/addemail email:pass - Tambah email
+/delemail email:pass - Hapus email
+/listemail - List semua email
+/addprem [id] - Tambah premium
+/delprem [id] - Hapus premium
+/listprem - List user premium
+
+🔄 /start - Menu utama
+  `;
+
+  await ctx.reply(menuText, { parse_mode: 'Markdown' });
 });
 
-// Handler tombol utama dashboard
-bot.on('callback_query', async (ctx) => {
-  const action = ctx.callbackQuery.data;
-  const msgId = ctx.callbackQuery.message.message_id;
-  const chatId = ctx.callbackQuery.message.chat.id;
-
-  try {
-
-    // =======================
-    // DASHBOARD UTAMA
-    // =======================
-    if (action === 'menu') {
-      await ctx.telegram.editMessageMedia(
-        chatId,
-        msgId,
-        undefined,
-        {
-          type: 'photo',
-          media: 'https://files.catbox.moe/0x7mt1.jpg',
-          caption: dashboardText(),
-          parse_mode: 'Markdown'
-        },
-        {
-          reply_markup: {
-            inline_keyboard: [
-         [
-          { text: '[ 𖤐 ғɪx ᴍᴇʀᴀʜ ᴍᴇɴᴜ 𖤐] ', callback_data: 'banding' },
-          { text: '[ 𖤐 ᴏᴡɴᴇʀ ᴍᴇɴᴜ 𖤐 ]', callback_data: 'menuowner' }
-         ],
-         [
-           { text: '[ 𖤐 ᴄᴇᴋ ʙɪᴏ ᴍᴇɴᴜ 𖤐 ]', callback_data: 'cek' },
-           { text: '[𖤐ᴛʜᴀɴᴋ ᴛᴏ/ʙᴇsᴛ ғʀɪᴇɴᴅ𖤐]', callback_data: 'besti' }
-        ],
-        [
-           { text: '[ 𖤐 ʙᴜʏ sᴄʀɪᴘᴛ? 𖤐 ]', url: 't.me/Lunzy2' }]
-            ]
-          }
-        }
-      );
-      return;
-    }
-
-
-    // =======================
-    // APPEAL MODE / BANDING
-        if (action === 'banding') {
-      await ctx.telegram.editMessageMedia(
-        chatId,
-        msgId,
-        undefined,
-        {
-          type: 'photo',
-          media: 'https://files.catbox.moe/0x7mt1.jpg',
-          caption:
-            '╭───────[ 𖤐 ᴀᴘᴘᴇᴀʟ ᴍᴏᴅᴇ 𖤐 ]───────\n' +
-            '│ Use the format:\n' +
-            '│ `/fix <nomor>`\n' +
-            '│ example: `/fix 628123456789`\n' +
-            '│\n' +
-            '│ 🔹 The red fix is text says contact us\n' +
-            '╰───────────────────────\n' +
-            'ᴀᴘᴘᴇᴀʟ ᴍᴏᴅᴇ ʙʏ ʟᴜɴᴢʏ',
-          parse_mode: 'Markdown'
-        },
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔁', callback_data: 'menu' }]
-            ]
-          }
-        }
-      );
-      return;
-    }
-    
-    
-        if (action === 'cek') {
-      await ctx.telegram.editMessageMedia(
-        chatId,
-        msgId,
-        undefined,
-        {
-          type: 'photo',
-          media: 'https://files.catbox.moe/0x7mt1.jpg',
-          caption:
-'╭───────[ 𖤐 ᴄʜᴇᴋ ʙɪᴏ ᴍᴇɴᴜ 𖤐 ]───────\n' +
-'│ /cekbio no1 no2 ...\n' +
-'│ Cek bio documen kirim txt/xlsx\n' +
-'╰──────────────────────────\n' +
-            'ᴄʜᴇᴋ ʙɪᴏ ᴍᴇɴᴜ ʙʏ ʟᴜɴᴢʏ',           
-          parse_mode: 'Markdown'
-        },
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔁', callback_data: 'menu' }]
-            ]
-          }
-        }
-      );
-      return;
-    }
-    // =======================
-    if (action === 'besti') {
-      await ctx.telegram.editMessageMedia(
-        chatId,
-        msgId,
-        undefined,
-        {
-          type: 'photo',
-          media: 'https://files.catbox.moe/0x7mt1.jpg',
-          caption:
-'╭─────────[ 𖤐 ʙᴇsᴛ ғʀɪᴇɴᴅ 𖤐 ]──────\n' +
-'│ ᴛʜᴀɴᴋ ʏᴏᴜ ᴛᴏ ᴛᴇᴀᴍ \n' +
-'│ ᴀʟʟᴀʜ sᴡᴛ \n' +
-'│ ʟᴜɴᴢʏ ᴅᴇᴠ ᴛᴇᴀᴍ\n' +
-'│ ʀᴇᴢᴢ ᴘᴛ/ʙᴇsᴛ ғʀɪᴇɴᴅ\n' +
-'│ ʜᴀɴᴢ sᴇᴄᴜʀɪᴛʏ/ʙᴇsᴛ ғʀɪᴇɴᴅ\n' +
-'│ ᴢᴇᴀɴ ᴘᴛ/ʙᴇsᴛ ғʀɪᴇɴᴅ\n' +
-'╰──────────────────────────\n' +
-            'ᴛʜᴀɴᴋ ʏᴏᴜ',           
-          parse_mode: 'Markdown'
-        },
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔁', callback_data: 'menu' }]
-            ]
-          }
-        }
-      );
-      return;
-    }
-    // =======================
-    //
-        if (action === 'menuowner') {
-      await ctx.telegram.editMessageMedia(
-        chatId,
-        msgId,
-        undefined,
-        {
-          type: 'photo',
-          media: 'https://files.catbox.moe/0x7mt1.jpg',
-          caption:
-'╭──────────[ 𖤐 ᴏᴡɴᴇʀ 𖤐 ]─────────\n' +
-'│ /addemal\n' +
-'│ /delemail\n' +
-'│ /listemail\n' +
-'│ /addprem\n' +
-'│ /addprem\n' +
-'│ /pairing\n' +
-'╰──────────────────────────\n' +
-            'ᴏᴡɴᴇʀ ᴍᴇɴᴜ ʙʏ ʟᴜɴᴢʏ',           
-          parse_mode: 'Markdown'
-        },
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔁', callback_data: 'menu' }]
-            ]
-          }
-        }
-      );
-      return;
-    }
-    
-
-  } catch (err) {
-    console.error('Callback Error:', err);
-    await ctx.answerCbQuery(`❌ Error: ${err.message}`, { show_alert: true });
+// PREMIUM MANAGEMENT
+bot.command('addprem', async (ctx) => {
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Hanya owner yang bisa menambah premium.');
   }
 
+  let targetId = ctx.message.reply_to_message 
+    ? ctx.message.reply_to_message.from.id 
+    : ctx.message.text.split(' ')[1];
+
+  if (!targetId) {
+    return ctx.reply('❌ Format: /addprem [user_id] atau reply pesan user.');
+  }
+
+  targetId = targetId.toString();
+
+  if (!premiumUsers.includes(targetId)) {
+    premiumUsers.push(targetId);
+    savePremium();
+    await ctx.reply(`✅ User ${targetId} berhasil ditambahkan ke premium.`);
+  } else {
+    await ctx.reply('⚠️ User sudah premium.');
+  }
+});
+
+bot.command('delprem', async (ctx) => {
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Hanya owner yang bisa menghapus premium.');
+  }
+
+  let targetId = ctx.message.reply_to_message 
+    ? ctx.message.reply_to_message.from.id 
+    : ctx.message.text.split(' ')[1];
+
+  if (!targetId) {
+    return ctx.reply('❌ Format: /delprem [user_id] atau reply pesan user.');
+  }
+
+  targetId = targetId.toString();
+  const index = premiumUsers.indexOf(targetId);
+
+  if (index > -1) {
+    premiumUsers.splice(index, 1);
+    savePremium();
+    await ctx.reply(`✅ User ${targetId} berhasil dihapus dari premium.`);
+  } else {
+    await ctx.reply('⚠️ User tidak ditemukan di list premium.');
+  }
+});
+
+bot.command('listprem', async (ctx) => {
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Hanya owner yang bisa melihat list premium.');
+  }
+
+  if (premiumUsers.length === 0) {
+    return ctx.reply('📭 Belum ada user premium.');
+  }
+
+  let list = '💎 *DAFTAR USER PREMIUM:*\n\n';
+  premiumUsers.forEach((id, index) => {
+    list += `${index + 1}. ${id}\n`;
+  });
+
+  await ctx.reply(list, { parse_mode: 'Markdown' });
+});
+
+// WHATSAPP PAIRING
+bot.command('pairing', async (ctx) => {
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Hanya owner yang bisa melakukan pairing.');
+  }
+
+  const phoneNumber = ctx.message.text.split(' ')[1]?.replace(/[^0-9]/g, '');
+
+  if (!phoneNumber) {
+    return ctx.reply('❌ Format: /pairing [nomor]\nContoh: /pairing 6281234567890');
+  }
+
+  if (!waClient) {
+    return ctx.reply('⚠️ WhatsApp client belum siap.');
+  }
+
+  try {
+    await ctx.reply('⏳ Meminta kode pairing...');
+    
+    const code = await waClient.requestPairingCode(phoneNumber);
+    
+    await ctx.reply(
+      `📱 *PAIRING CODE*\n\n` +
+      `Kode: *${code}*\n\n` +
+      `Instruksi:\n` +
+      `1. Buka WhatsApp di HP\n` +
+      `2. Pilih Menu → Perangkat Tertaut\n` +
+      `3. Pilih "Tautkan dengan nomor telepon"\n` +
+      `4. Masukkan kode di atas`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (error) {
+    console.error('Pairing error:', error);
+    await ctx.reply('❌ Gagal mendapatkan pairing code. Pastikan nomor valid.');
+  }
+});
+
+// EMAIL MANAGEMENT
+bot.command('addemail', async (ctx) => {
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Hanya owner yang bisa menambah email.');
+  }
+
+  const input = ctx.message.text.replace('/addemail', '').trim();
+  
+  if (!input || !input.includes(':')) {
+    return ctx.reply('❌ Format: /addemail email:password\nContoh: /addemail test@gmail.com:password123');
+  }
+
+  try {
+    const { content, sha } = await githubGetFile();
+    const newContent = content.trim() + (content.trim() ? '\n' : '') + input + '\n';
+    
+    await githubUpdateFile(newContent, sha);
+    await ctx.reply('✅ Email berhasil ditambahkan!');
+  } catch (error) {
+    console.error('Add email error:', error);
+    await ctx.reply('❌ Gagal menambahkan email.');
+  }
+});
+
+bot.command('listemail', async (ctx) => {
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Hanya owner yang bisa melihat list email.');
+  }
+
+  try {
+    const { content } = await githubGetFile();
+    
+    if (!content.trim()) {
+      return ctx.reply('📭 Tidak ada data email.');
+    }
+
+    const emails = content.trim().split('\n').filter(line => line.trim());
+    
+    let list = '📧 *DAFTAR EMAIL:*\n\n';
+    emails.forEach((email, index) => {
+      const [emailPart] = email.split(':');
+      list += `${index + 1}. ${emailPart}\n`;
+    });
+
+    await ctx.reply(list, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('List email error:', error);
+    await ctx.reply('❌ Gagal mengambil data email.');
+  }
+});
+
+bot.command('delemail', async (ctx) => {
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Hanya owner yang bisa menghapus email.');
+  }
+
+  const emailToDelete = ctx.message.text.split(' ')[1];
+  
+  if (!emailToDelete) {
+    return ctx.reply('❌ Format: /delemail [email]\nContoh: /delemail test@gmail.com');
+  }
+
+  try {
+    const result = await deleteEmailFromGithub(emailToDelete);
+    
+    if (result.success) {
+      await ctx.reply(`✅ ${result.message}`);
+    } else {
+      await ctx.reply(`❌ ${result.message}`);
+    }
+  } catch (error) {
+    console.error('Delete email error:', error);
+    await ctx.reply('❌ Gagal menghapus email.');
+  }
+});
+
+// CEK BIO COMMAND
+bot.command('cekbio', async (ctx) => {
+  if (!isPremium(ctx.from.id) && !isOwner(ctx.from.id)) {
+    return ctx.reply('❌ Fitur ini hanya untuk user premium.\nHubungi owner untuk upgrade.');
+  }
+
+  const args = ctx.message.text.split(' ').slice(1);
+  
+  if (args.length === 0) {
+    return ctx.reply('❌ Format: /cekbio [nomor1] [nomor2] ...\nContoh: /cekbio 6281234567890 6289876543210');
+  }
+
+  // Handle file upload
+  if (ctx.message.document) {
+    const doc = ctx.message.document;
+    
+    if (!doc.mime_type.includes('text') && !doc.file_name.endsWith('.txt')) {
+      return ctx.reply('❌ File harus berupa .txt');
+    }
+
+    try {
+      const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+      const response = await axios.get(fileLink.href);
+      const numbers = response.data.match(/\d+/g) || [];
+      
+      if (numbers.length === 0) {
+        return ctx.reply('❌ Tidak ditemukan nomor dalam file.');
+      }
+
+      await handleBioCheck(ctx, numbers);
+    } catch (error) {
+      console.error('File processing error:', error);
+      await ctx.reply('❌ Gagal membaca file.');
+    }
+  } else {
+    await handleBioCheck(ctx, args);
+  }
+});
+
+// FIX MODE (APPEAL)
+bot.command('fix', async (ctx) => {
+  const userId = ctx.from.id;
+  const args = ctx.message.text.split(' ').slice(1);
+  const phoneNumber = args[0];
+
+  if (!phoneNumber) {
+    return ctx.reply('❌ Format: /fix [nomor]\nContoh: /fix 6281234567890');
+  }
+
+  if (!/^\d{10,15}$/.test(phoneNumber)) {
+    return ctx.reply('❌ Nomor tidak valid. Gunakan 10-15 digit angka.');
+  }
+
+  // Cooldown check
+  const now = Date.now();
+  const cooldownTime = 2 * 60 * 1000; // 2 menit
+  
+  if (userCooldowns[userId] && now < userCooldowns[userId]) {
+    const remaining = Math.ceil((userCooldowns[userId] - now) / 1000);
+    return ctx.reply(`⏳ Tunggu ${remaining} detik sebelum menggunakan fix lagi.`);
+  }
+
+  userCooldowns[userId] = now + cooldownTime;
+
+  try {
+    await ctx.reply('⏳ Sedang memproses appeal...');
+    
+    const result = await callApi('/banding', { nomor: phoneNumber });
+    
+    const responseText = `
+📊 *HASIL APPEAL*
+
+📞 Nomor: ${phoneNumber}
+📧 Email: ${result.email || 'Tidak tersedia'}
+📝 Status: ${result.success ? '✅ Berhasil' : '❌ Gagal'}
+💬 Response: ${result.response || 'Tidak ada response'}
+    `;
+
+    await ctx.reply(responseText, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('Fix mode error:', error);
+    await ctx.reply('❌ Terjadi kesalahan saat proses appeal.');
+  }
+});
+
+// ==========================
+// CALLBACK QUERY HANDLER
+// ==========================
+
+bot.on('callback_query', async (ctx) => {
+  const action = ctx.callbackQuery.data;
+  
+  if (action === 'show_menu') {
+    await ctx.deleteMessage();
+    await ctx.replyWithPhoto(
+      { url: 'https://files.catbox.moe/0x7mt1.jpg' },
+      {
+        caption: '📱 *PILIH MENU*',
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🔍 Cek Bio', callback_data: 'menu_cekbio' },
+              { text: '🔧 Fix Mode', callback_data: 'menu_fix' }
+            ],
+            [
+              { text: '👑 Owner Menu', callback_data: 'menu_owner' },
+              { text: '⭐ Premium', url: 'https://t.me/Lunzy2' }
+            ],
+            [
+              { text: '🔄 Start', callback_data: 'menu_start' }
+            ]
+          ]
+        }
+      }
+    );
+  }
+  
+  else if (action === 'menu_cekbio') {
+    await ctx.editMessageText(
+      '🔍 *CEK BIO WHATSAPP*\n\n' +
+      'Untuk cek bio, gunakan:\n' +
+      '`/cekbio 6281234567890`\n\n' +
+      'Atau kirim file .txt berisi list nomor.\n\n' +
+      '⚠️ *Note:* Fitur ini hanya untuk user premium.',
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Kembali', callback_data: 'show_menu' }]
+          ]
+        }
+      }
+    );
+  }
+  
+  else if (action === 'menu_fix') {
+    await ctx.editMessageText(
+      '🔧 *FIX MODE (APPEAL)*\n\n' +
+      'Untuk menggunakan fix mode:\n' +
+      '`/fix 6281234567890`\n\n' +
+      '⏱️ Cooldown: 2 menit per penggunaan\n\n' +
+      '⚠️ *Note:* Masukkan nomor WhatsApp yang ingin di-appeal.',
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Kembali', callback_data: 'show_menu' }]
+          ]
+        }
+      }
+    );
+  }
+  
+  else if (action === 'menu_owner') {
+    if (!isOwner(ctx.from.id)) {
+      await ctx.answerCbQuery('❌ Hanya owner yang bisa mengakses menu ini.', { show_alert: true });
+      return;
+    }
+    
+    await ctx.editMessageText(
+      '👑 *OWNER MENU*\n\n' +
+      '📱 WhatsApp:\n' +
+      '`/pairing [nomor]` - Pairing WhatsApp\n\n' +
+      '📧 Email Management:\n' +
+      '`/addemail email:pass` - Tambah email\n' +
+      '`/delemail [email]` - Hapus email\n' +
+      '`/listemail` - List semua email\n\n' +
+      '⭐ Premium Management:\n' +
+      '`/addprem [id]` - Tambah premium\n' +
+      '`/delprem [id]` - Hapus premium\n' +
+      '`/listprem` - List user premium',
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Kembali', callback_data: 'show_menu' }]
+          ]
+        }
+      }
+    );
+  }
+  
+  else if (action === 'menu_start') {
+    await ctx.deleteMessage();
+    ctx.telegram.sendMessage(
+      ctx.chat.id,
+      'ℹ️ Gunakan /start untuk memulai bot.'
+    );
+  }
+  
   await ctx.answerCbQuery();
 });
 
+// ==========================
+// ERROR HANDLING
+// ==========================
 
-
-
-
-
-
-// 📲 MODE BANDING (COOLDOWN 120s)
-bot.command('fix', async (ctx) => {
-  const userId = ctx.from.id;
-  const now = Date.now();
-
-  const args = ctx.message.text.split(' ').slice(1);
-  const nomor = args[0]?.trim();
-
-  if (!nomor) {
-    return ctx.replyWithMarkdown(
-      '⚠️ Kirim nomor setelah command.\n\n📌 *Contoh:*\n`/banding 6281234567890`'
-    );
-  }
-
-  if (!/^\d{8,15}$/.test(nomor)) {
-    return ctx.reply('❌ Nomor tidak valid. Gunakan hanya angka tanpa spasi atau simbol.');
-  }
-
-  // COOLDOWN
-  const cooldownEnd = userCooldowns[userId] || 0;
-  if (now < cooldownEnd) {
-    const wait = Math.ceil((cooldownEnd - now) / 1000);
-    return ctx.reply(`🕓 Tunggu ${wait}s sebelum bisa cek nomor lagi.`);
-  }
-
-  // MULAI COOLDOWN
- 
-
-  try {
-    const data = await callApi('/banding', { nomor });
-
-    const resultText = `ғᴏʀᴍᴀᴛ ʟᴀᴘᴏʀᴀɴ.ᴀɴᴅᴀ
-╭──────────────────────
-│📞 ɴᴏᴍᴏᴛ : *${nomor}*
-│📊 sᴛᴀᴛᴜs : ${formatResult(data)}
-│📂 ᴇᴍᴀɪʟ: ${data.email}
-│📬 ᴛᴜᴊᴜᴀɴ: WhatsApp Support
-╰──────────────────────`;
-
-    await ctx.replyWithMarkdown(resultText);
-  } catch (err) {
-    await ctx.reply(`❌ Terjadi kesalahan: ${err.message}`);
+bot.catch((err, ctx) => {
+  console.error(`Error for ${ctx.updateType}:`, err);
+  if (ctx.chat) {
+    ctx.reply('❌ Terjadi kesalahan. Silakan coba lagi nanti.');
   }
 });
 
-bot.launch().then(() => console.log('🤖 BOT TELE AKTIF | WA CLIENT JALAN ✅'));
+// ==========================
+// START BOT
+// ==========================
 
+async function startBot() {
+  try {
+    // Start WhatsApp client
+    await startWhatsAppClient();
+    
+    // Start Telegram bot
+    await bot.launch();
+    
+    console.log('🤖 Bot Telegram berhasil dijalankan!');
+    console.log('📱 WhatsApp client starting...');
+    
+    // Enable graceful stop
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    
+  } catch (error) {
+    console.error('Failed to start bot:', error);
+  }
+}
+
+// Run the bot
+startBot();
